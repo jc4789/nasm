@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright 1996-2022 The NASM Authors - All Rights Reserved */
+/* Copyright (c) Nocturne contributors. */
 
 /*
  * outform.h    header file for binding output format drivers to the
@@ -56,7 +57,7 @@
 
 /* ====configurable info begins here==== */
 /* formats configurable:
- * bin,obj,obj2,elf32,elf64,aout,aoutb,coff,win32,as86,rdf2,macho32,macho64 */
+ * bin,obj,obj2,elf32,elf64,aout,aoutb,coff,win32,as86,rdf2,macho32,macho64,nos */
 
 /* process options... */
 
@@ -111,6 +112,9 @@
 #endif
 #ifndef OF_MACHO64
 #define OF_MACHO64
+#endif
+#ifndef OF_NOS
+#define OF_NOS
 #endif
 #ifndef OF_DBG
 #define OF_DBG
@@ -224,6 +228,9 @@
 #ifdef OF_NO_MACHO64
 #undef OF_MACHO64
 #endif
+#ifdef OF_NO_NOS
+#undef OF_NOS
+#endif
 #ifdef OF_NO_DBG
 #undef OF_DBG
 #endif
@@ -249,6 +256,7 @@ extern const struct ofmt of_win64;
 extern const struct ofmt of_ieee;
 extern const struct ofmt of_macho32;
 extern const struct ofmt of_macho64;
+extern const struct ofmt of_nos;
 extern const struct ofmt of_dbg;
 
 #ifdef BUILD_DRIVERS_ARRAY      /* only if included from outform.c */
@@ -305,6 +313,9 @@ static const struct ofmt * const drivers[] = {
 #endif
 #ifdef OF_MACHO64
     &of_macho64,
+#endif
+#ifdef OF_NOS
+    &of_nos,
 #endif
 #ifdef OF_DBG
     &of_dbg,

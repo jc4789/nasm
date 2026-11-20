@@ -1,6 +1,7 @@
 # -*- makefile -*-
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright 1996-2025 The NASM Authors - All Rights Reserved
+# Copyright (c) Nocturne contributors.
 #
 # Makefile for building NASM using Microsoft Visual C++ and NMAKE.
 # Last tested on Visual Studio 2022 Community Edition.
@@ -136,6 +137,7 @@ OUTPUTOBJ = \
 	output\outelf.obj \
 	output\outobj.obj output\outas86.obj \
 	output\outdbg.obj output\outieee.obj output\outmacho.obj \
+	output\outnos.obj \
 	output\codeview.obj
 
 # Assembler-only library objects

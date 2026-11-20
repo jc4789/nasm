@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright 1996-2020 The NASM Authors - All Rights Reserved */
+/* Copyright (c) Nocturne contributors. */
 
 /*
  * outdbg.c	output routines for the Netwide Assembler to produce
@@ -155,7 +156,9 @@ static const char *out_flags(enum out_flags flags)
 {
     static const char *out_flags[] = {
         "signed",
-        "unsigned"
+        "unsigned",
+        "nowarn",
+        "branch"
     };
     static char flags_buf[1024];
     unsigned long flv = flags;

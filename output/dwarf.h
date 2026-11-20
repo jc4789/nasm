@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright 1996-2018 The NASM Authors - All Rights Reserved */
+/* Copyright (c) Nocturne contributors. */
 
 #ifndef OUTPUT_DWARF_H
 #define OUTPUT_DWARF_H
@@ -85,6 +86,11 @@ enum dwarf_tag {
 enum dwarf_child {
 	DW_CHILDREN_no		= 0x00,
 	DW_CHILDREN_yes		= 0x01
+};
+
+/* DWARF 5 の 7.5.1 の表 7.2 */
+enum dwarf_unit_type {
+	DW_UT_compile		= 0x01
 };
 
 enum dwarf_form {
@@ -546,6 +552,18 @@ enum dwarf_line_number_extended {
 	DW_LNE_set_discriminator= 0x04,
 	DW_LNE_lo_user		= 0x80,
 	DW_LNE_hi_user		= 0xff
+};
+
+/* DWARF 5 の 7.22 の表 7.27 */
+enum dwarf_line_content_type {
+	DW_LNCT_path		= 0x1,
+	DW_LNCT_directory_index	= 0x2
+};
+
+/* DWARF 5 の 7.25 の表 7.30 */
+enum dwarf_range_list_entry {
+	DW_RLE_end_of_list	= 0x00,
+	DW_RLE_start_length	= 0x07
 };
 
 enum dwarf_macinfo_type {

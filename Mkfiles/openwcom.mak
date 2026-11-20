@@ -133,6 +133,7 @@ OUTPUTOBJ = &
 	output/outelf.obj &
 	output/outobj.obj output/outas86.obj &
 	output/outdbg.obj output/outieee.obj output/outmacho.obj &
+	output/outnos.obj &
 	output/codeview.obj
 
 # Assembler-only library objects

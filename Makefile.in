@@ -1,6 +1,7 @@
 # -*- makefile -*-
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright 1996-2025 The NASM Authors - All Rights Reserved
+# Copyright (c) Nocturne contributors.
 
 # Auto-configuring Makefile for the Netwide Assembler.
 
@@ -184,6 +185,7 @@ OUTPUTOBJ = \
 	output/outelf.$(O) \
 	output/outobj.$(O) output/outas86.$(O) \
 	output/outdbg.$(O) output/outieee.$(O) output/outmacho.$(O) \
+	output/outnos.$(O) \
 	output/codeview.$(O)
 
 # Assembler-only library objects

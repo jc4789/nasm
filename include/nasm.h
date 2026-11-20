@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright 1996-2025 The NASM Authors - All Rights Reserved */
+/* Copyright (c) Nocturne contributors. */
 
 /*
  * nasm.h   main header file for the Netwide Assembler: inter-module interface
@@ -96,7 +97,8 @@ enum out_flags {
     OUT_SIGNED   = 1,           /* Value is signed */
     OUT_UNSIGNED = 2,           /* Value is unsigned */
     OUT_SIGNMASK = 3,           /* Mask for signedness bits */
-    OUT_NOWARN   = 4            /* Don't warn on overflow (already done?) */
+    OUT_NOWARN   = 4,           /* Don't warn on overflow (already done?) */
+    OUT_BRANCH   = 8            /* 相対の値が分岐の行き先（call、jmp、jcc の即値） */
 };
 
 /*

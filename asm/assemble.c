@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright 1996-2025 The NASM Authors - All Rights Reserved */
+/* Copyright (c) Nocturne contributors. */
 
 /*
  * assemble.c   code generation for the Netwide Assembler
@@ -618,14 +619,17 @@ static void out_imm(struct out_data *data, const struct operand *opx,
     out(data);
 }
 
+/*
+ * flags は OUT_SIGNED に、分岐の即値なら OUT_BRANCH を足したもの。
+ */
 static void out_reladdr(struct out_data *data, const struct operand *opx,
-                        int size)
+                        int size, enum out_flags flags)
 {
     if (opx->opflags & OPFLAG_RELATIVE)
         nasm_nonfatal("invalid use of self-relative expression");
 
     data->type     = OUT_RELADDR;
-    data->flags    = OUT_SIGNED;
+    data->flags    = flags;
     data->size     = size;
     data->toffset  = opx->offset;
     data->tsegment = opx->segment;
@@ -2488,7 +2492,7 @@ static void gencode(struct out_data *data, insn *ins)
                 if (delta != (int8_t)delta)
                     nasm_nonfatal("short jump is out of range");
             }
-            out_reladdr(data, opx, 1);
+            out_reladdr(data, opx, 1, OUT_SIGNED | OUT_BRANCH);
             break;
 
         case4(054):
@@ -2496,7 +2500,7 @@ static void gencode(struct out_data *data, insn *ins)
             break;
 
         case4(060):
-            out_reladdr(data, opx, 2);
+            out_reladdr(data, opx, 2, OUT_SIGNED | OUT_BRANCH);
             break;
 
         case4(064):
@@ -2505,11 +2509,11 @@ static void gencode(struct out_data *data, insn *ins)
             else
                 size = (ins->op_size == 16) ? 2 : 4;
 
-            out_reladdr(data, opx, size);
+            out_reladdr(data, opx, size, OUT_SIGNED | OUT_BRANCH);
             break;
 
         case4(070):
-            out_reladdr(data, opx, 4);
+            out_reladdr(data, opx, 4, OUT_SIGNED | OUT_BRANCH);
             break;
 
         case4(074):
@@ -2821,7 +2825,7 @@ static void gencode(struct out_data *data, insn *ins)
                     break;
                 default:
                     if (ins->ea.rip) {
-                        out_reladdr(data, opy, ins->ea.bytes);
+                        out_reladdr(data, opy, ins->ea.bytes, OUT_SIGNED);
                         overflow = false;
                     } else {
                         unsigned int asize = ins->addr_size >> 3;

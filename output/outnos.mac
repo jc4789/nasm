@@ -1,0 +1,5 @@
+;; SPDX-License-Identifier: BSD-2-Clause
+;; Copyright (c) Nocturne contributors.
+
+OUT: nos
+%define __?SECT?__ [section .text]
