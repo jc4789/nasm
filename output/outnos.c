@@ -34,9 +34,6 @@
 
 #ifdef OF_NOS
 
-/* C の constructor と destructor の既定の優先度。名前と属性に優先度のない init と fini のセクションに使う。 */
-#define NOS_PRIORITY_DEFAULT 65535u
-
 /* セクションのアラインメントの上限（common/nos_read.c が align_shift を 30 までしか受けない）。 */
 #define NOS_ALIGN_SHIFT_MAX 30u
 
@@ -701,6 +698,10 @@ static void nos_symdef(char *name, int32_t segment, int64_t offset, int is_globa
         nasm_nonfatal("ローカルのシンボル `%s' に weak・image・exportable は書けない", name);
         return;
     }
+    if (undefined && sp.visibility_given) {
+        nasm_nonfatal("未定義のシンボル `%s' に image・exportable は書けない", name);
+        return;
+    }
 
     nasm_new(y);
     y->name = name;
@@ -709,7 +710,11 @@ static void nos_symdef(char *name, int32_t segment, int64_t offset, int is_globa
     y->value = undefined ? 0 : offset;
     src_get(&y->line, &y->file);
     y->binding = !is_global ? NOS_BINDING_LOCAL : sp.weak ? NOS_BINDING_WEAK : NOS_BINDING_GLOBAL;
-    y->visibility = !is_global ? NOS_VISIBILITY_IMAGE : sp.visibility_given ? sp.visibility : NOS_VISIBILITY_EXPORTABLE;
+    /* 見え方は、定義された GLOBAL と WEAK のシンボルだけが意味を持つ（common/nos.h の enum nos_visibility） */
+    y->visibility = undefined ? NOS_VISIBILITY_EXPORTABLE
+                    : !is_global ? NOS_VISIBILITY_IMAGE
+                    : sp.visibility_given ? sp.visibility
+                                          : NOS_VISIBILITY_EXPORTABLE;
     if (!nos_sym_type(y, &sp, undefined)) {
         nasm_free(y);
         return;
@@ -906,7 +911,7 @@ static void nos_reference(struct nos_sect *s, const struct out_data *d)
     bool ok;
 
     nos_put(s, NULL, d->size);
-    if (nos_role_empty(s->role) || s->role == NOS_ROLE_DECLARATION) {
+    if (nos_role_empty(s->role) || s->role == NOS_ROLE_DECLARATION || s->role == NOS_ROLE_BLOB) {
         nasm_nonfatal("%s のセクション `%s' はリロケーションを持てない", nos_role_name(s->role), s->name);
         return;
     }
@@ -1336,15 +1341,17 @@ static void nos_sections_resolve(struct SAA *groups)
                 s->group_number = t->group_number;
         if (s->group_number)
             continue;
-        for (struct nos_sym *y = nos_symbols; y && !s->group_number; y = y->next) {
-            if (strcmp(y->name, s->group))
-                continue;
-            struct nos_group g = {.symbol = htole32(y->number), .selection = htole32(NOS_SELECT_ANY)};
-            saa_wbytes(groups, &g, sizeof g);
-            s->group_number = ++group_count;
+        struct nos_sym *y = nos_symbols;
+        while (y && strcmp(y->name, s->group))
+            y = y->next;
+        if (!y || (!y->section && !y->absolute)) { /* グループを名づけるシンボルは、定義されたシンボル */
+            nasm_nonfatal("セクション `%s' のグループのシンボル `%s' が%s", s->name, s->group,
+                          y ? "定義されていない" : "ない");
+            continue;
         }
-        if (!s->group_number)
-            nasm_nonfatal("セクション `%s' のグループのシンボル `%s' がない", s->name, s->group);
+        struct nos_group g = {.symbol = htole32(y->number), .rule = htole32(NOS_GROUP_FIRST)};
+        saa_wbytes(groups, &g, sizeof g);
+        s->group_number = ++group_count;
     }
     src_set(line, file);
 }

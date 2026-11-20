@@ -3,34 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /* .NOS：Nocturne の実行ファイル形式。オブジェクトファイル、アーカイブ、プログラム、ライブラリー、ドライバー、カーネル
-   のイメージは、どれもこの形式で、ヘッダーの kind で分ける。規則と理由は docs/nos.md。このヘッダーは <stdint.h>
-   だけを使い、ほかの言語のツール（LLVM のフォーク、Go のリンカー、object クレート）は、ここからコピーか生成で同じ
-   定義を持つ。
+   のイメージは、どれもこの形式で、ヘッダーの kind で分ける。このヘッダーは形（構造体、値、最初の大きさ）を持ち、規則と
+   理由（拡張の規則、置き方、選び方、ハッシュの範囲）は docs/nos.md にある。<stdint.h> だけを使い、ほかの言語のツール
+   （LLVM のフォーク、Go のリンカー、object クレート）は、ここからコピーか生成で同じ定義を持つ。
 
    ファイル：struct nos_file（コンテナのヘッダー）、struct nos_slice の配列、コンテナのテーブルの一覧。スライスは
-   一つのアーキテクチャのイメージかオブジェクトで、自分の範囲の中で完結する（中のオフセットは全部スライスの先頭から）。
-   数値は little endian。
-
-   拡張の規則（20 年使うための規則。読み込み側は全部これに従う）：
-   - ヘッダーと配列の要素は、後ろにフィールドを足して大きくなる。ヘッダーは head_bytes、配列は要素の大きさ
-     （slice_bytes、table_bytes、region_bytes、テーブルの entry_bytes）を持つ。読み込み側は要素の大きさで進み、知る分
-     だけを読み、知る大きさに足りない後ろのフィールドは 0 として読む。後ろに足すフィールドは、0 が「無い」か既定の
-     値を意味する形にする。最初の大きさ（下の NOS_MIN_*）より小さい物は拒否する。
-   - flags の bit 0〜15 は、知らなければ扱えない bit。bit 16〜31 は、知らなければ無視してよい bit。
-   - 知らない値（enum の値と、bit 0〜15 の知らない bit）：テーブルの種類なら、NOS_TABLE_CRITICAL のテーブルは拒否し、
-     ほかは無視する。スライスの machine なら、そのスライスを選ばない。見せるだけの値（プログラムの宣言、アイコン、
-     関数名）なら、そのエントリーを使わない。ほかの値（リージョン、リロケーション、プロバイダー、セクション、
-     シンボルなど）なら、その値を使う読み込み側がファイルを拒否する。
-   - reserved は書く側が 0 にし、読み込み側は読まない。
-   - 一つの一覧に同じ種類のテーブルは一つ。
-   - 先頭 8 byte の magic と、format の位置は変えない。format は、この規則そのものが変わる時だけ上がる。
-
-   置き方：コンテナのヘッダー、スライスの配列、コンテナのテーブルの一覧と中身、各スライスの範囲は、互いに重ならない。
-   スライスの中のヘッダー、機能の配列、リージョンの配列、テーブルの一覧、リージョンのファイル内のデータ、テーブルの
-   中身も、互いに重ならない。そのため nos strip と nos thin は、中身を書き換えずに範囲を移せる。
-
-   読み込み側の約束（common/nos_read.c）：範囲外を読まない、オーバーフローで止まらない、読む量はファイルの大きさで
-   決まり、固定の上限を置かない。書き込み可能かつ実行可能なリージョンは、形式に存在しない。 */
+   一つのアーキテクチャのイメージかオブジェクトで、中のオフセットは全部スライスの先頭から数える。数値は little endian。 */
 #ifndef NOCTURNE_NOS_H
 #define NOCTURNE_NOS_H
 
@@ -42,8 +20,7 @@ extern "C" {
 
 /* ---- コンテナ ---- */
 
-/* 0x89 は 0x80 以上なので、テキストと取り違えず、7 bit の転送で壊れたファイルを見分ける。CR LF と LF は、改行を
-   変換するコピーで壊れたファイルを見分ける。NUL は、テキストを扱う道具（版管理の差分など）にバイナリと判断させる。 */
+/* 値の理由は docs/nos.md の 2 章。 */
 #define NOS_MAGIC_BYTES 0x89, 'N', 'O', 'S', 0x0D, 0x0A, 0x00, 0x0A
 #define NOS_FORMAT 1u
 
@@ -82,12 +59,7 @@ struct nos_slice {
     uint64_t head;     /* スライスのヘッダー（struct nos_image か struct nos_object）の、スライス先頭からのオフセット */
 };
 
-/* スライスの選択：読み込み側は配列の順に見て、machine が一致し、page_shift が使えて、スライスが要求する機能を
-   そのマシンが全部持つ最初のスライスを選ぶ。作る側は、特化したものから並べる（比べられない機能の集合の順は、作る側
-   が決める）。マシンの機能は、カーネルとブートローダーが同じ関数（nos_x86_64_features、common/nos_read.h）で CPUID
-   から決め、OS が状態を有効にするもの（XCR0 の bit が要るもの）だけを含み、全 CPU に共通の分にする。
-
-   x86-64 の機能の番号：最低要件（kernel/src/arch/cpu.c の required。x86-64-v4 の命令を含む）を超える命令セットの
+/* x86-64 の機能の番号（スライスの選び方は docs/nos.md の 2 章）：最低要件（kernel/src/arch/cpu.c の required。x86-64-v4 の命令を含む）を超える命令セットの
    拡張。CPUID の場所は leaf.subleaf:レジスター[bit] で、出典は Intel SDM 093 Vol. 1 第 21 章、Intel ISE 319433-063 の
    表 1-3、Intel APX 355828-009、Intel AVX10.2 361050-007、AMD PPR 57238 rev 0.49、AMD APM 24594 rev 3.34 付録 E
    （docs/records/nos-20261120/cpuid.md）。番号は増やすだけで、意味を変えない。 */
@@ -150,9 +122,14 @@ enum nos_x86_64_feature {
     NOS_X86_64_APX_F = 56,             /* 7.1:EDX[21]。XCR0[19] */
     NOS_X86_64_APX_NCI_NDD_NF = 57,    /* 0x29.0:EBX[0]（APX_F の時だけ leaf 0x29 がある） */
 };
+/* 機能の番号の上限（一番大きい番号 + 1）。番号を足したら、これも変える。機能の bit の配列の大きさに使う。 */
+#define NOS_X86_64_FEATURE_COUNT 58u
 
 /* ---- テーブル ---- */
 
+/* テーブルの中身は、ファイルとスライスの中の位置を持たない：ほかのテーブルを指す時は、そのテーブルの先頭から数える。
+   位置を持つのはヘッダー、スライスの配列、リージョンの記述、テーブルの一覧だけなので、道具は知らない種類のテーブルも
+   中身を変えずに動かせる。 */
 #define NOS_TABLE_CRITICAL 0x1u /* 知らない種類なら、読み込み側はそのイメージを拒否する */
 #define NOS_TABLE_DETACHED 0x2u /* 外してもイメージの意味が変わらない。ハッシュに含めない。nos strip が外せる */
 
@@ -290,8 +267,10 @@ struct nos_region {
     uint64_t file_bytes;    /* CODE、CONSTANT、RELOCATED は memory_bytes と同じ。DATA は以下で、残りは 0 */
 };
 /* リージョンはアドレスの昇順で、ページを分け合わず、[0, span) の中にある。間の隙間はマップしない。ファイルの中の
-   データもページを分け合わない。CODE と CONSTANT はリロケーションを持たないので、リンカーは、イメージのアドレスの
-   絶対値が要る CODE のセクションをエラーにし、CONSTANT のセクションを RELOCATED に置く。 */
+   データもページを分け合わず、最後のページの終わりまでスライスの中にあり、file_bytes の後ろからページの終わりまでは
+   0（ほかのものを置かない）。そのため、ファイルのページをそのまま写したページの中身は、全部イメージのハッシュで決まる。
+   CODE と CONSTANT はリロケーションを持たないので、リンカーは、イメージのアドレスの絶対値が要る CODE のセクションを
+   エラーにし、CONSTANT のセクションを RELOCATED に置く。 */
 
 /* スライスのテーブル。 */
 enum nos_image_table {
@@ -373,7 +352,8 @@ struct nos_provider {
 };
 
 /* マップする側は、プロバイダーのエクスポートから名前を引き、slot の 8 byte にアドレスと addend の和を書く。slot は
-   RELOCATED の中にあり、書いた後は読み取り専用になる。 */
+   RELOCATED か DATA の中にある：リンカーが作るスロットとサンクの行き先は RELOCATED で、書いた後は読み取り専用になる。
+   DATA の slot は、書き換えられるデータの中のポインターの初期値が、ほかのイメージのシンボルを指す所。 */
 struct nos_import {
     uint64_t slot;      /* ベースからのオフセット。8 に揃う */
     int64_t addend;
@@ -404,13 +384,17 @@ struct nos_driver {
 
 /* ---- カーネル ----
    KERNEL のエントリーは、カーネルが動けるページテーブルの段数ごとに一つで、リンカーがカーネルの宣言 nos.kernel
-   （NOS_KERNEL）から作る。ブートローダーが段数を決め（common/boot_info.h）、その段数のエントリーの image の範囲から
-   乱数でベースを選び（align に揃える）、direct の範囲にダイレクトマップを置く。 */
+   （NOS_KERNEL）から作る。範囲は両方とも、その段数の線形アドレスの上半分（正準の番地）の中にある。ブートローダーが
+   段数を決め、image の範囲から乱数でベースを選び（align に揃える）、ダイレクトマップの全体を direct の範囲に置く
+   （common/boot_info.h）。 */
 struct nos_kernel {
     uint32_t levels;                  /* ページテーブルの段数：4 か 5 */
     uint32_t flags;                   /* 0 */
     uint64_t image_low, image_high;   /* カーネルのイメージを置いてよい仮想アドレスの範囲 [low, high) */
-    uint64_t direct_low, direct_high; /* ダイレクトマップを置いてよい仮想アドレスの範囲 [low, high) */
+    uint64_t direct_low, direct_high; /* ダイレクトマップの全体を置いてよい仮想アドレスの範囲 [low, high) */
+    uint32_t boot_flags;              /* このカーネルが分かる、struct boot_info の flags の bit 0〜15。ローダーは、ここに無い
+                                         bit 0〜15 を立てる引き渡しで、このカーネルに入らない */
+    uint32_t reserved;
 };
 
 /* ---- 関数名とツール用のデータ ---- */
@@ -429,14 +413,7 @@ struct nos_blob {
 };
 
 /* ---- ハッシュ ----
-   イメージのハッシュは、次の byte の並びのハッシュで、nos strip と fat binary の組み立てで変わらない：
-   1. スライスのヘッダー（head_bytes）。hash、features、regions、tables、table_count を 0 にしたもの
-   2. 機能の配列（feature_count × 2 byte）
-   3. リージョンの順に：リージョンの記述（region_bytes。file_offset を 0 にしたもの）と、そのファイル内のデータ
-   4. テーブルの一覧の順に、DETACHED でないテーブルの：記述（table_bytes。offset を 0 にしたもの）と中身
-   ヘッダーにオフセットの欄を足すなど、この並びを変える時は、新しい hash_kind にする。
-   使い道：デバッグ情報を持つコピーとの対応づけ、ハイバネーションのイメージのカーネルの確認、ブートローダーが
-   カーネルとブートドライバーを TPM に記録する値。コンテナのテーブルはイメージのハッシュに入らない。 */
+   イメージのハッシュ（struct nos_image の hash）の範囲と並びは docs/nos.md の 5.9 で、計算は common/nos_hash.c。 */
 
 /* ---- オブジェクトのスライス ---- */
 struct nos_object {
@@ -471,6 +448,8 @@ enum nos_role {
     NOS_ROLE_DECLARATION = 11, /* 宣言（下の「宣言」）。名前は nos. で始まる。マップしない */
     NOS_ROLE_BLOB = 12,       /* ツール用のデータ。名前が BLOBS の名前になる。マップしない */
 };
+/* DECLARATION と BLOB のセクションはアドレスを持たないので、その中のリロケーションと、その中のシンボルを指す
+   リロケーションは、リンカーのエラー。 */
 
 #define NOS_SECTION_RETAIN 0x1u /* 参照がなくても、不要セクションの削除で外さない */
 #define NOS_SECTION_MERGE 0x2u  /* entry_bytes の要素の並びで、同じ要素をまとめてよい */
@@ -479,15 +458,17 @@ enum nos_role {
    そのシンボルの要素を指し、A はその要素からの差。書く側は、A が 0 でない参照のシンボルを SECTION のシンボルに
    替えない（替えると、別の要素を指しうる）。 */
 
+#define NOS_PRIORITY_DEFAULT 65535u /* ソースに順序の指定が無い INIT と FINI の priority */
+
 struct nos_section {
     uint32_t name;          /* STRINGS の中のオフセット */
     uint32_t role;          /* enum nos_role */
-    uint32_t align_shift;   /* アラインメントは 1 << align_shift */
+    uint32_t align_shift;   /* アラインメントは 1 << align_shift。30 以下 */
     uint32_t flags;         /* NOS_SECTION_* */
     uint32_t group;         /* GROUPS の番号 + 1。0 はなし */
     uint32_t parent;        /* セクションの番号 + 1：親が残る時だけ残る（関数の FDE など）。0 はなし */
     uint32_t entry_bytes;   /* MERGE の要素の大きさ */
-    uint32_t priority;      /* INIT と FINI の順序 */
+    uint32_t priority;      /* INIT と FINI の順序。ソースに指定が無ければ NOS_PRIORITY_DEFAULT */
     uint32_t dwarf_part;    /* DEBUG の enum nos_dwarf */
     uint32_t reserved;
     uint64_t offset;        /* 中身の、スライス先頭からのオフセット。ZERO と TLS_ZERO は 0 */
@@ -516,6 +497,8 @@ enum nos_symbol_type {
     NOS_SYMBOL_SECTION = 4,  /* セクションの先頭。name は 0 でよい */
     NOS_SYMBOL_FILE = 5,     /* 元のファイルの名前。section は NOS_SYMBOL_ABSOLUTE */
 };
+/* 見え方は、定義された GLOBAL と WEAK のシンボルだけが意味を持つ。LOCAL のシンボルには IMAGE を、未定義の
+   シンボルには EXPORTABLE を書き、読み込み側はどちらも読まない。 */
 enum nos_visibility {
     NOS_VISIBILITY_IMAGE = 1,      /* イメージの中だけ。エクスポートにならない */
     NOS_VISIBILITY_EXPORTABLE = 2, /* リンクの指定でエクスポートにできる */
@@ -540,14 +523,14 @@ struct nos_relocation {
     uint32_t symbol;       /* SYMBOLS の番号 */
 };
 
-enum nos_selection {
-    NOS_SELECT_ANY = 1, /* 同じシンボルのグループは、最初の一つだけを残す。名づけるシンボルが GLOBAL か WEAK なら、
-                           名前が同じグループを同じとみなす。LOCAL なら、そのファイルの中だけで選ぶ（部分リンクで
-                           LOCAL にしたグループは、ほかのファイルと競わない） */
+enum nos_group_rule {
+    NOS_GROUP_FIRST = 1, /* 同じグループは、リンカーが最初に読んだ一つだけを残す。名づけるシンボルが GLOBAL か WEAK
+                            なら、名前が同じグループを同じとみなす。LOCAL なら、そのファイルの中だけで比べる（部分リンクで
+                            LOCAL にしたグループは、ほかのファイルと競わない） */
 };
 struct nos_group {
-    uint32_t symbol;     /* グループを名づけるシンボルの番号 */
-    uint32_t selection;  /* enum nos_selection */
+    uint32_t symbol; /* グループを名づけるシンボルの番号。定義されたシンボル */
+    uint32_t rule;   /* enum nos_group_rule */
 };
 
 /* x86-64 のリロケーション。S はシンボルのアドレス、A は addend、P はリロケーションの場所、G はリンカーが作る 8 byte の
@@ -556,8 +539,10 @@ struct nos_group {
 
    TLS のディスクリプターは 16 byte：解決の関数のアドレスと、その引数（S の TLS ブロック内のオフセット）。
    解決の関数は、ライブラリー自身が定義する NOS_TLS_RESOLVER の関数で、rax にディスクリプターのアドレスを受け、
-   rax に S - TP を返し、ほかのレジスターとフラグ以外の状態を変えない。ライブラリーはスレッドが動き始めた後に
-   マップされるので、TLS ブロックはスレッドが初めて使った時に作る。
+   rax に S - TP を返す。rax とフラグのほかは、レジスターも状態も変えない（呼ぶ側は何も退避しない）。ライブラリーは
+   スレッドが動き始めた後にマップされるので、TLS ブロックはスレッドが初めて使った時に作る。解決の関数は自分の
+   イメージの TLS ブロックだけを扱うので、TLS のシンボルはエクスポートにならず、インポートもできない（リンカーの
+   エラー）。ほかのイメージには、そのイメージの関数を通して渡す。
 
    プログラムの TLS ブロックは [TP - T, TP) にある。T は tls_bytes を tls_align の倍数に切り上げた値で、TP（スレッドの
    struct n_thread_block の先頭）は tls_align に揃う。位置がリンクの時に決まるので、リンカーはプログラムの
@@ -651,7 +636,7 @@ struct nos_kernel_record {
     uint32_t bytes;
     uint32_t levels;
     uint32_t flags;
-    uint32_t reserved;
+    uint32_t boot_flags;
     uint64_t image_low, image_high;
     uint64_t direct_low, direct_high;
 };
@@ -679,11 +664,11 @@ struct nos_kernel_record {
         char name[sizeof(name_)];                                                                               \
     } __attribute__((aligned(8))) nos_driver_declared = {sizeof nos_driver_declared, (flags_), name_}
 /* このカーネルは、ページテーブルが levels_ 段の時、イメージを [image_low_, image_high_) に、ダイレクトマップを
-   [direct_low_, direct_high_) に置ける。 */
-#define NOS_KERNEL(levels_, image_low_, image_high_, direct_low_, direct_high_)                                  \
+   [direct_low_, direct_high_) に置ける。boot_flags_ は、分かる struct boot_info の flags の bit 0〜15。 */
+#define NOS_KERNEL(levels_, boot_flags_, image_low_, image_high_, direct_low_, direct_high_)                      \
     __attribute__((used, retain, section(NOS_SECTION_KERNEL), aligned(8))) static const struct nos_kernel_record \
-        NOS_UNIQUE(nos_kernel_) = {sizeof(struct nos_kernel_record), (levels_), 0, 0, (image_low_), (image_high_),  \
-                                   (direct_low_), (direct_high_)}
+        NOS_UNIQUE(nos_kernel_) = {sizeof(struct nos_kernel_record), (levels_), 0, (boot_flags_), (image_low_),     \
+                                   (image_high_), (direct_low_), (direct_high_)}
 #endif
 
 #ifdef __cplusplus
@@ -740,7 +725,7 @@ NOS_STATIC_ASSERT(sizeof(struct nos_provider) == NOS_MIN_PROVIDER, "struct nos_p
 NOS_STATIC_ASSERT(sizeof(struct nos_import) == NOS_MIN_IMPORT, "struct nos_import");
 NOS_STATIC_ASSERT(sizeof(struct nos_export) == NOS_MIN_EXPORT, "struct nos_export");
 NOS_STATIC_ASSERT(sizeof(struct nos_driver) == NOS_MIN_DRIVER, "struct nos_driver");
-NOS_STATIC_ASSERT(sizeof(struct nos_kernel) == NOS_MIN_KERNEL, "struct nos_kernel");
+NOS_STATIC_ASSERT(sizeof(struct nos_kernel) == 48, "struct nos_kernel");
 NOS_STATIC_ASSERT(sizeof(struct nos_name) == NOS_MIN_NAME, "struct nos_name");
 NOS_STATIC_ASSERT(sizeof(struct nos_blob) == NOS_MIN_BLOB, "struct nos_blob");
 NOS_STATIC_ASSERT(sizeof(struct nos_object) == NOS_MIN_OBJECT, "struct nos_object");
