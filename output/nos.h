@@ -61,8 +61,8 @@ struct nos_slice {
 
 /* x86-64 の機能の番号（スライスの選び方は docs/nos.md の 2 章）：最低要件（common/x86_64/cpu_baseline.h。x86-64-v4 の命令を含む）を超える命令セットの
    拡張。CPUID の場所は leaf.subleaf:レジスター[bit] で、出典は Intel SDM 093 Vol. 1 第 21 章、Intel ISE 319433-063 の
-   表 1-3、Intel APX 355828-009、Intel AVX10.2 361050-007、AMD PPR 57238 rev 0.49、AMD APM 24594 rev 3.34 付録 E
-   （docs/records/nos-20261120/cpuid.md）。番号は増やすだけで、意味を変えない。 */
+   表 1-3、Intel APX 355828-009、Intel AVX10.2 361050-007、AMD PPR 57238 rev 0.49、AMD APM 24594 rev 3.34 付録 E。
+   番号は増やすだけで、意味を変えない。 */
 enum nos_x86_64_feature {
     NOS_X86_64_SSE4A = 1,              /* 0x80000001:ECX[6]（AMD） */
     NOS_X86_64_XSAVEOPT = 2,           /* 0xD.1:EAX[0] */
