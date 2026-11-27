@@ -59,7 +59,7 @@ struct nos_slice {
     uint64_t head;     /* スライスのヘッダー（struct nos_image か struct nos_object）の、スライス先頭からのオフセット */
 };
 
-/* x86-64 の機能の番号（スライスの選び方は docs/nos.md の 2 章）：最低要件（kernel/src/arch/cpu.c の required。x86-64-v4 の命令を含む）を超える命令セットの
+/* x86-64 の機能の番号（スライスの選び方は docs/nos.md の 2 章）：最低要件（common/x86_64/cpu_baseline.h。x86-64-v4 の命令を含む）を超える命令セットの
    拡張。CPUID の場所は leaf.subleaf:レジスター[bit] で、出典は Intel SDM 093 Vol. 1 第 21 章、Intel ISE 319433-063 の
    表 1-3、Intel APX 355828-009、Intel AVX10.2 361050-007、AMD PPR 57238 rev 0.49、AMD APM 24594 rev 3.34 付録 E
    （docs/records/nos-20261120/cpuid.md）。番号は増やすだけで、意味を変えない。 */
@@ -152,17 +152,22 @@ enum nos_file_table {
     NOS_FILE_ICONS = 6,         /* struct nos_icon */
     NOS_FILE_ICON_FRAMES = 7,   /* struct nos_icon_frame */
     NOS_FILE_ICON_DATA = 8,     /* byte 列：フレームの画像 */
+    /* CRITICAL。struct nos_driver_manifest。一つ。C:\Nocturne\Drivers の装置プログラムの種別と要求能力。 */
+    NOS_FILE_DRIVER_MANIFEST = 9,
 };
 
 /* ---- プログラムの宣言 ----
-   プログラムレジストリ（user/services/programs）、シェル、Files が読む、利用者に見せる値。PROGRAM を持つファイルが
-   レジストリに載る。サービスの宣言（ケイパビリティ、起こし方）はシステムの方針で、ファイルが自分で決めないので、
+   プログラムレジストリ（user/services/programs）が読む、利用者に見せる値。PROGRAM を持つファイルがレジストリに載る。サービスの宣言（ケイパビリティ、起こし方）はシステムの方針で、ファイルが自分で決めないので、
    ここに置かない（scripts/programs.py が生成する、サービスマネージャーの表）。
 
    RUN を持つファイルはスライスを持たず（slice_count が 0、種類は PROGRAM）、ほかのプログラムが文書を開いて走らせる
    プログラム（スクリプト）。 */
 #define NOS_PROGRAM_MENU 0x10000u    /* 開始メニューに出す */
 #define NOS_PROGRAM_DESKTOP 0x20000u /* デスクトップに出す */
+/* 入力方式（IME）のエンジン。この旗を持つプログラムが、設定の「入力方式」の一覧に出て、サービス textinput の
+   エンジンになれる（common/textinput_abi.h）。配列とは別の物である：US の配列のままでも選べ、選ばれなければ
+   何もしない。 */
+#define NOS_PROGRAM_INPUT_METHOD 0x40000u
 struct nos_program {
     uint32_t flags;    /* NOS_PROGRAM_* */
     uint32_t reserved;
@@ -180,12 +185,24 @@ struct nos_run {
     uint32_t argument; /* STRINGS の中のオフセット：このファイルと同じフォルダーにある、渡す文書の名前 */
 };
 
+/* ---- 装置プログラムのマニフェスト（NOS_FILE_DRIVER_MANIFEST） ----
+   C:\Nocturne\Drivers の装置プログラム（RULES を持つ NOS_KIND_PROGRAM）が自分の役割と必要能力を宣言する。
+   カーネルの装置の管理者が読み込み時に種別と能力ホワイトリストを検証し、違反する像は拒否する。 */
+#define NOS_DRIVER_ROLE_DISPLAY 0x1u /* 表示出力（SYS_DISPLAY_DRIVER_*）を提供する */
+#define NOS_DRIVER_ROLE_GPU 0x2u     /* GPU adapter（SYS_GPU_ADAPTER_*）を提供する */
+#define NOS_DRIVER_ROLES_KNOWN (NOS_DRIVER_ROLE_DISPLAY | NOS_DRIVER_ROLE_GPU)
+struct nos_driver_manifest {
+    uint32_t roles;        /* NOS_DRIVER_ROLE_* の組 */
+    uint32_t flags;        /* 0 */
+    uint64_t capabilities; /* (1ull << enum n_cap) の組（0 は不正） */
+};
+
 /* ---- アイコン ----
    静止アイコンは一枚の画像。SVG を優先し、サイズ違いの PNG を並べてもよい。読み込み側は SVG を、なければ一番近い
    サイズの PNG を選ぶ。アニメーションアイコンはフレームの列で、同じ用途の静止アイコンも持つ（アニメーションを出さない
    場所と、動きを減らす設定のため）。 */
 enum nos_icon_role {
-    NOS_ICON_PROGRAM = 1, /* プログラムのアイコン（シェル、Files、プログラムレジストリ） */
+    NOS_ICON_PROGRAM = 1, /* プログラムのアイコン（シェルの開始メニューとデスクトップ） */
 };
 struct nos_icon {
     uint32_t role;         /* enum nos_icon_role */
@@ -253,8 +270,8 @@ struct nos_unwind {
 enum nos_region_kind {
     NOS_REGION_CODE = 1,      /* 読み取りと実行。全プロセスで同じ物理ページ。リロケーションなし */
     NOS_REGION_CONSTANT = 2,  /* 読み取り。全プロセスで同じ物理ページ。リロケーションなし */
-    NOS_REGION_RELOCATED = 3, /* ベースごとにリロケーションを適用した後、読み取り専用。同じベースでマップする
-                                 プロセスの間で共有できる */
+    NOS_REGION_RELOCATED = 3, /* ベースごとにリロケーションを適用した後、読み取り専用。アクセスのあったページだけが
+                                 プロセスのプライベートなページになる */
     NOS_REGION_DATA = 4,      /* 読み書き。プロセスのプライベートなページ */
 };
 
@@ -663,6 +680,17 @@ struct nos_kernel_record {
         uint32_t bytes, flags;                                                                                  \
         char name[sizeof(name_)];                                                                               \
     } __attribute__((aligned(8))) nos_driver_declared = {sizeof nos_driver_declared, (flags_), name_}
+/* このイメージ（ドライバーか、デバイスを claim で所有するプログラム）がデバイスと結ぶルール：common/hal_abi.h の
+   N_HAL_RULE を一つ以上。 */
+#ifdef __cplusplus
+#define NOS_RULES(...)                                                                                          \
+    __attribute__((used, retain, section(NOS_SECTION_RULES))) static constinit const struct n_hal_term         \
+        NOS_UNIQUE(nos_rules_)[] = {__VA_ARGS__}
+#else
+#define NOS_RULES(...)                                                                                          \
+    __attribute__((used, retain, section(NOS_SECTION_RULES))) static const struct n_hal_term                   \
+        NOS_UNIQUE(nos_rules_)[] = {__VA_ARGS__}
+#endif
 /* このカーネルは、ページテーブルが levels_ 段の時、イメージを [image_low_, image_high_) に、ダイレクトマップを
    [direct_low_, direct_high_) に置ける。boot_flags_ は、分かる struct boot_info の flags の bit 0〜15。 */
 #define NOS_KERNEL(levels_, boot_flags_, image_low_, image_high_, direct_low_, direct_high_)                      \
@@ -687,6 +715,7 @@ struct nos_kernel_record {
 #define NOS_MIN_RUN 8u
 #define NOS_MIN_ICON 16u
 #define NOS_MIN_ICON_FRAME 32u
+#define NOS_MIN_DRIVER_MANIFEST 16u
 #define NOS_MIN_IMAGE 240u
 #define NOS_MIN_REGION 40u
 #define NOS_MIN_RELOCATION_RUN 24u
@@ -717,6 +746,7 @@ NOS_STATIC_ASSERT(sizeof(struct nos_opens) == NOS_MIN_OPENS, "struct nos_opens")
 NOS_STATIC_ASSERT(sizeof(struct nos_run) == NOS_MIN_RUN, "struct nos_run");
 NOS_STATIC_ASSERT(sizeof(struct nos_icon) == NOS_MIN_ICON, "struct nos_icon");
 NOS_STATIC_ASSERT(sizeof(struct nos_icon_frame) == NOS_MIN_ICON_FRAME, "struct nos_icon_frame");
+NOS_STATIC_ASSERT(sizeof(struct nos_driver_manifest) == NOS_MIN_DRIVER_MANIFEST, "struct nos_driver_manifest");
 NOS_STATIC_ASSERT(sizeof(struct nos_image) == NOS_MIN_IMAGE, "struct nos_image");
 NOS_STATIC_ASSERT(sizeof(struct nos_unwind) == 8, "struct nos_unwind");
 NOS_STATIC_ASSERT(sizeof(struct nos_region) == NOS_MIN_REGION, "struct nos_region");
