@@ -248,7 +248,8 @@ struct nos_image {
     uint64_t tables;         /* struct nos_table[table_count] の、スライス先頭からのオフセット（8 に揃う） */
     uint64_t align;          /* ベースアドレスのアラインメント。ページ以上の 2 の冪 */
     uint64_t span;           /* ベースアドレスからのアドレス範囲の長さ。ページの倍数 */
-    uint64_t entry;          /* エントリーポイントの、ベースからのオフセット。CODE の中 */
+    uint64_t entry;          /* エントリーポイントの、ベースからのオフセット。CODE の中。PROGRAM、DRIVER、KERNEL と、
+                                NOS_PROVIDER_PROCESS を提供する LIBRARY だけが使い、ほかの LIBRARY の値は読まない */
     struct nos_range init;   /* 8 byte の関数アドレスの配列。前から呼ぶ。RELOCATED の中 */
     struct nos_range fini;   /* 後ろから呼ぶ。RELOCATED の中 */
     struct nos_range tls;    /* TLS テンプレート（初期値の部分）。CONSTANT か RELOCATED の中 */
@@ -305,6 +306,9 @@ enum nos_image_table {
     NOS_IMAGE_NAME_STRINGS = 12,    /* DETACHED。byte 列：NAMES の名前 */
     NOS_IMAGE_BLOBS = 13,           /* struct nos_blob：ツール用の、マップしないデータ（rustc のメタデータ） */
     NOS_IMAGE_BLOB_DATA = 14,       /* byte 列：BLOBS の中身 */
+    NOS_IMAGE_FORWARDS = 15,        /* CRITICAL。struct nos_forward：転送のエクスポート。(provider, 名前の byte) の昇順 */
+    NOS_IMAGE_REPLACEMENTS = 16,    /* CRITICAL。struct nos_replacement。PROGRAM だけ。(provider, 名前の byte) の昇順 */
+    NOS_IMAGE_TLS_ARGUMENTS = 17,   /* CRITICAL。struct nos_tls_argument。LIBRARY だけ。slot の昇順で重ならない */
     /* DWARF（DETACHED、byte 列）：NOS_IMAGE_DWARF + enum nos_dwarf。オブジェクトの DEBUG のセクションを、部分ごとに
        並べたもの */
     NOS_IMAGE_DWARF = 0x100,
@@ -357,31 +361,81 @@ struct nos_relocation_run {
    プロバイダーは、名前とバージョン (major, minor) を持つ API の集まり。要求は「名前が同じで、major が同じで、minor が
    提供側の minor 以下」で満たされる。カーネルが提供するのは nocturne.abi（major が N_ABI_GENERATION、minor が
    N_ENTRY_SLOTS）と nocturne.ddk（DDK_MAJOR、DDK_MINOR）。プログラムとライブラリーは nocturne.abi を、ドライバーは
-   nocturne.ddk を要求する。 */
+   nocturne.ddk を要求する。
+
+   持てる種類：REQUIRES はどれも。IMPORTS は PROGRAM、LIBRARY、DRIVER。PROVIDES、EXPORTS、FORWARDS は PROGRAM、LIBRARY、
+   KERNEL。REQUIRES と PROVIDES は名前の byte の昇順で、名前が重ならない。 */
 #define NOS_PROVIDER_ABI "nocturne.abi"
 #define NOS_PROVIDER_DDK "nocturne.ddk"
 
+/* プロバイダーの旗（PROVIDES の flags。REQUIRES では 0）。一つのイメージの PROVIDES は、全部 SINGLE か、全部 SINGLE で
+   ないかのどちらか。 */
+#define NOS_PROVIDER_PROCESS 0x1u /* プロセスのランタイム。LIBRARY だけで、SINGLE も立つ。イメージに一つまで */
+#define NOS_PROVIDER_SINGLE 0x2u  /* プロセスに一つ（名前と major の組ごとに、プロセスの中の提供者は一つ）。LIBRARY だけ */
+
 struct nos_provider {
-    uint32_t name;   /* STRINGS の中のオフセット */
+    uint32_t name;     /* STRINGS の中のオフセット */
     uint32_t major;
-    uint32_t minor;
-    uint32_t flags;  /* 0 */
+    uint32_t minor;    /* REQUIRES では読み込みに要る版（強いインポートの since の最大） */
+    uint32_t flags;    /* NOS_PROVIDER_* */
+    uint32_t built;    /* REQUIRES では組んだ時の版（リンクの入力の PROVIDES の minor）。PROVIDES では 0 */
+    uint32_t reserved;
 };
 
-/* マップする側は、プロバイダーのエクスポートから名前を引き、slot の 8 byte にアドレスと addend の和を書く。slot は
-   RELOCATED か DATA の中にある：リンカーが作るスロットとサンクの行き先は RELOCATED で、書いた後は読み取り専用になる。
-   DATA の slot は、書き換えられるデータの中のポインターの初期値が、ほかのイメージのシンボルを指す所。 */
+/* マップする側は、プロバイダーのエクスポート（無ければ転送）から名前を引き、slot の 8 byte にアドレスと addend の和を
+   書く。slot は RELOCATED か DATA の中にある：リンカーが作るスロットとサンクの行き先は RELOCATED で、書いた後は読み取り
+   専用になる。DATA の slot は、書き換えられるデータの中のポインターの初期値が、ほかのイメージのシンボルを指す所。
+   IMPORTS は slot の昇順で、slot が重ならない。 */
+#define NOS_IMPORT_WEAK 0x1u /* 弱い：要求の minor を上げず、エクスポートが無ければ slot に 0 を書く */
+#define NOS_IMPORT_OWN 0x2u  /* provider は自分の PROVIDES の番号（SINGLE のプロバイダー）で、名前は自分の置き換えられる
+                                エクスポート（NOS_EXPORT_REPLACEABLE）。プログラムが置き換えていれば、その定義に結ぶ */
 struct nos_import {
     uint64_t slot;      /* ベースからのオフセット。8 に揃う */
     int64_t addend;
-    uint32_t provider;  /* REQUIRES の番号 */
+    uint32_t provider;  /* REQUIRES の番号（NOS_IMPORT_OWN なら PROVIDES の番号） */
     uint32_t name;      /* STRINGS の中のオフセット */
+    uint32_t flags;     /* NOS_IMPORT_* */
+    uint32_t reserved;
 };
 
+/* エクスポートの旗。どちらも番地の意味を変えない。 */
+#define NOS_EXPORT_REPLACEABLE 0x1u /* 言語の標準がプログラムによる置き換えを決めている関数（C++ の operator new と
+                                       operator delete）。SINGLE のプロバイダーのエクスポートだけが持てる */
+#define NOS_EXPORT_EXCLUSIVE 0x2u   /* 同じ名前の定義がほかのイメージにあるとプロセスの状態が分かれる（malloc の一族）。
+                                       リンカーは、オブジェクトかアーカイブがこの名前を定義すればエラーにする */
 struct nos_export {
     uint64_t address;   /* ベースからのオフセット */
     uint32_t provider;  /* PROVIDES の番号 */
     uint32_t name;      /* STRINGS の中のオフセット */
+    uint32_t since;     /* このシンボルが現れた、プロバイダーの minor（その minor 以下） */
+    uint32_t flags;     /* NOS_EXPORT_* */
+};
+
+/* 転送のエクスポート：自分のプロバイダー provider の名前 name を、自分の要求 target のプロバイダーの同じ名前の
+   エクスポートとして提供する。マップする側は行き先までたどり、行き先の実体の番地を slot に書く。同じ provider の
+   EXPORTS と同じ名前を持たない。 */
+struct nos_forward {
+    uint32_t provider;  /* PROVIDES の番号 */
+    uint32_t name;      /* STRINGS の中のオフセット */
+    uint32_t target;    /* REQUIRES の番号 */
+    uint32_t since;     /* 名前が provider に現れた minor（その minor 以下） */
+};
+
+/* 置き換え：プログラムが、要求 provider のプロバイダーの置き換えられるエクスポート name を、自分の定義 address で
+   置き換える。マップする側は、プロセスの中で、転送をたどった行き先がそのエクスポートになるインポートを、全部 address に
+   結ぶ。 */
+struct nos_replacement {
+    uint64_t address;   /* ベースからのオフセット。CODE の中 */
+    uint32_t provider;  /* REQUIRES の番号 */
+    uint32_t name;      /* STRINGS の中のオフセット */
+};
+
+/* ライブラリーの TLS のディスクリプターの 2 語目（下の「x86-64 のリロケーション」）：マップする側が、ページに初めて
+   アクセスがあった時に、イメージの TLS の配置から書く。静的な TLS のイメージには S - TP（0 以下）、動的な TLS の
+   イメージには「番号 << 32 | offset」（番号は 1 以上）。 */
+struct nos_tls_argument {
+    uint64_t slot;      /* ベースからのオフセット。RELOCATED の中で 8 に揃う */
+    uint64_t offset;    /* イメージの TLS ブロックの中のオフセット。tls_bytes より小さく、2^32 より小さい */
 };
 
 /* ---- ドライバーとデバイスのマッチングルール ---- */
@@ -554,12 +608,13 @@ struct nos_group {
    スロットのアドレス（中身は S）、TP はスレッドポインター（FS のベース）、D はリンカーが作る TLS のディスクリプター
    のアドレス。
 
-   TLS のディスクリプターは 16 byte：解決の関数のアドレスと、その引数（S の TLS ブロック内のオフセット）。
-   解決の関数は、ライブラリー自身が定義する NOS_TLS_RESOLVER の関数で、rax にディスクリプターのアドレスを受け、
-   rax に S - TP を返す。rax とフラグのほかは、レジスターも状態も変えない（呼ぶ側は何も退避しない）。ライブラリーは
-   スレッドが動き始めた後にマップされるので、TLS ブロックはスレッドが初めて使った時に作る。解決の関数は自分の
-   イメージの TLS ブロックだけを扱うので、TLS のシンボルはエクスポートにならず、インポートもできない（リンカーの
-   エラー）。ほかのイメージには、そのイメージの関数を通して渡す。
+   TLS のディスクリプターは 16 byte：解決の関数のアドレスと、その引数。解決の関数は NOS_TLS_RESOLVER の関数で、
+   rax にディスクリプターのアドレスを受け、rax に S - TP を返す。rax とフラグのほかは、レジスターも状態も変えない
+   （呼ぶ側は何も退避しない）。引数の 2 語目が TLS_ARGUMENTS の項なら、マップする側がイメージの TLS の配置から書く
+   （struct nos_tls_argument）。項でなければ、2 語目は S の TLS ブロック内のオフセットで、解決の関数はライブラリー自身が
+   定義し、TLS ブロックはスレッドが初めて使った時に作る。解決の関数は自分のイメージの TLS ブロックだけを扱うので、
+   TLS のシンボルはエクスポートにならず、インポートもできない（リンカーのエラー）。ほかのイメージには、そのイメージの
+   関数を通して渡す。
 
    プログラムの TLS ブロックは [TP - T, TP) にある。T は tls_bytes を tls_align の倍数に切り上げた値で、TP（スレッドの
    struct n_thread_block の先頭）は tls_align に揃う。位置がリンクの時に決まるので、リンカーはプログラムの
@@ -571,7 +626,8 @@ enum nos_x86_64_relocation {
     NOS_X86_64_ABS32S = 3,       /* S + A を 32 bit の符号付きで。絶対シンボルだけ */
     NOS_X86_64_PC32 = 4,         /* S + A - P。RIP 相対の参照、テーブルの差分 */
     NOS_X86_64_PC64 = 5,         /* S + A - P */
-    NOS_X86_64_BRANCH32 = 6,     /* S + A - P。call と jmp。インポートには、リンカーがサンクを置く */
+    NOS_X86_64_BRANCH32 = 6,     /* S + A - P。call と jmp、データ（CONSTANT を含む）の中の 32 bit の相対の参照（相対の
+                                    vtable の項）。インポートには、リンカーがイメージの中のサンクを置き、そこを指す */
     NOS_X86_64_SLOT32 = 7,       /* G + A - P */
     NOS_X86_64_SLOT32_LOAD = 8,  /* G + A - P。命令は mov r64, [rip + x]。S がイメージの中なら、リンカーが lea にする */
     NOS_X86_64_TP32 = 9,         /* S + A - TP。プログラムの TLS */
@@ -588,6 +644,8 @@ enum nos_x86_64_relocation {
     NOS_X86_64_TLS_OFFSET64 = 14, /* 同じ。DWARF の TLS の場所 */
     NOS_X86_64_SECTION32 = 15,   /* S の出力セクションの中のオフセット + A。DWARF の部分の間の参照 */
     NOS_X86_64_SECTION64 = 16,   /* 同じ */
+    NOS_X86_64_SLOT32_BRANCH = 17, /* G + A - P。命令は call [rip + x] か jmp [rip + x]。S がイメージの中なら、リンカーが
+                                      直接の呼び出し（addr32 call rel32、nop と jmp rel32。どちらも 6 byte）にする */
 };
 
 /* ---- アーカイブのスライス ----
@@ -628,7 +686,7 @@ struct nos_archive_symbol {
 
    nos.requires  struct nos_provider_record → REQUIRES。同じ名前の要求は一つにまとめる（major が違えばエラー、minor は
                  大きい方）
-   nos.provides  struct nos_provider_record → PROVIDES
+   nos.provides  struct nos_provider_record と旗 → PROVIDES
    nos.driver    struct nos_driver_record → DRIVER。イメージに一つ
    nos.rules     struct n_hal_term の並び → RULES。そのまま続けて並べる
    nos.kernel    struct nos_kernel_record → KERNEL。カーネルのイメージだけで、ページテーブルの段数ごとに一つ */
@@ -638,7 +696,9 @@ struct nos_archive_symbol {
 #define NOS_SECTION_RULES "nos.rules"
 #define NOS_SECTION_KERNEL "nos.kernel"
 
-/* レコードの頭。NUL 終端の UTF-8 の名前が続く。 */
+/* レコードの頭。NUL 終端の UTF-8 の名前が続く。nos.provides のレコードは、名前の NUL の後ろの、レコードの先頭から
+   4 に揃えた位置に uint32_t の旗（NOS_PROVIDER_*）を持つ。bytes がその位置の後ろまで届かないレコードは旗を 0 と読む。
+   名前と旗の間とレコードの終わりの詰めは 0。 */
 struct nos_provider_record {
     uint32_t bytes;
     uint32_t major;
@@ -671,9 +731,14 @@ struct nos_kernel_record {
 /* このイメージは name_ のプロバイダーの (major_, minor_) を要求する。 */
 #define NOS_REQUIRE(name_, major_, minor_)                                                                     \
     NOS_PROVIDER_RECORD_(NOS_SECTION_REQUIRES, NOS_UNIQUE(nos_require_), name_, major_, minor_)
-/* このイメージは name_ のプロバイダーの (major_, minor_) を提供する。 */
-#define NOS_PROVIDE(name_, major_, minor_)                                                                     \
-    NOS_PROVIDER_RECORD_(NOS_SECTION_PROVIDES, NOS_UNIQUE(nos_provide_), name_, major_, minor_)
+/* このイメージは name_ のプロバイダーの (major_, minor_) を、旗 flags_（NOS_PROVIDER_*）で提供する。 */
+#define NOS_PROVIDE_(var_, name_, major_, minor_, flags_)                                                       \
+    __attribute__((used, retain, section(NOS_SECTION_PROVIDES))) static const struct {                         \
+        uint32_t bytes, major, minor;                                                                           \
+        char name[sizeof(name_)];                                                                               \
+        uint32_t flags;                                                                                         \
+    } __attribute__((aligned(8))) var_ = {sizeof var_, (major_), (minor_), name_, (flags_)}
+#define NOS_PROVIDE(name_, major_, minor_, flags_) NOS_PROVIDE_(NOS_UNIQUE(nos_provide_), name_, major_, minor_, flags_)
 /* このイメージはドライバー name_（フラグ NOS_DRIVER_*）。 */
 #define NOS_DRIVER(name_, flags_)                                                                              \
     __attribute__((used, retain, section(NOS_SECTION_DRIVER))) static const struct {                           \
@@ -725,6 +790,9 @@ struct nos_kernel_record {
 #define NOS_MIN_DRIVER 8u
 #define NOS_MIN_RULE_TERM NOS_RULE_TERM_BYTES
 #define NOS_MIN_KERNEL 40u
+#define NOS_MIN_FORWARD 16u
+#define NOS_MIN_REPLACEMENT 16u
+#define NOS_MIN_TLS_ARGUMENT 16u
 #define NOS_MIN_NAME 24u
 #define NOS_MIN_BLOB 24u
 #define NOS_MIN_OBJECT 32u
@@ -751,9 +819,12 @@ NOS_STATIC_ASSERT(sizeof(struct nos_image) == NOS_MIN_IMAGE, "struct nos_image")
 NOS_STATIC_ASSERT(sizeof(struct nos_unwind) == 8, "struct nos_unwind");
 NOS_STATIC_ASSERT(sizeof(struct nos_region) == NOS_MIN_REGION, "struct nos_region");
 NOS_STATIC_ASSERT(sizeof(struct nos_relocation_run) == NOS_MIN_RELOCATION_RUN, "struct nos_relocation_run");
-NOS_STATIC_ASSERT(sizeof(struct nos_provider) == NOS_MIN_PROVIDER, "struct nos_provider");
-NOS_STATIC_ASSERT(sizeof(struct nos_import) == NOS_MIN_IMPORT, "struct nos_import");
-NOS_STATIC_ASSERT(sizeof(struct nos_export) == NOS_MIN_EXPORT, "struct nos_export");
+NOS_STATIC_ASSERT(sizeof(struct nos_provider) == 24, "struct nos_provider");
+NOS_STATIC_ASSERT(sizeof(struct nos_import) == 32, "struct nos_import");
+NOS_STATIC_ASSERT(sizeof(struct nos_export) == 24, "struct nos_export");
+NOS_STATIC_ASSERT(sizeof(struct nos_forward) == NOS_MIN_FORWARD, "struct nos_forward");
+NOS_STATIC_ASSERT(sizeof(struct nos_replacement) == NOS_MIN_REPLACEMENT, "struct nos_replacement");
+NOS_STATIC_ASSERT(sizeof(struct nos_tls_argument) == NOS_MIN_TLS_ARGUMENT, "struct nos_tls_argument");
 NOS_STATIC_ASSERT(sizeof(struct nos_driver) == NOS_MIN_DRIVER, "struct nos_driver");
 NOS_STATIC_ASSERT(sizeof(struct nos_kernel) == 48, "struct nos_kernel");
 NOS_STATIC_ASSERT(sizeof(struct nos_name) == NOS_MIN_NAME, "struct nos_name");
