@@ -5,8 +5,9 @@
 /* .NOS：Nocturne の実行ファイル形式。オブジェクトファイル、アーカイブ、プログラム、ライブラリー、ドライバー、カーネル
    のイメージは、どれもこの形式で、ヘッダーの kind で分ける。このヘッダーは形（構造体、値、最初の大きさ）を持ち、規則と
    理由（拡張の規則、置き方、選び方、ハッシュの範囲、結び付け）は docs/nos.md にある。<stdint.h> だけを使い、ほかの
-   ツール（LLVM と NASM のフォークの nos.h はこのファイルのコピー、Go の internal/nos と Rust の object クレートは同じ
-   定義を自分の言語で持つ）は、ここに合わせる。
+   ツール（LLVM と NASM のフォークの nos.h はこのファイルのコピー、Go の internal/nos、Rust の object クレートと
+   is_executable クレート、パッケージのサービスの user/services/packages/src/image.rs は同じ定義を自分の言語で持つ）は、
+   ここに合わせる。
 
    ファイル：struct nos_file（コンテナのヘッダー）、struct nos_slice の配列、コンテナのテーブルの一覧。スライスは
    一つのアーキテクチャのイメージかオブジェクトで、中のオフセットは全部スライスの先頭から数える。数値は little endian。 */
