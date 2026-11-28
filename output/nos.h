@@ -38,9 +38,9 @@ struct nos_file {
     uint32_t format;       /* NOS_FORMAT */
     uint32_t kind;         /* enum nos_kind */
     uint32_t head_bytes;   /* このヘッダーの大きさ */
-    uint32_t slice_count;  /* 1 以上。コンテナのテーブル RUN を持つプログラムは 0 */
+    uint32_t slice_count;  /* 1 以上 */
     uint32_t slice_bytes;  /* struct nos_slice 一つの大きさ */
-    uint32_t table_count;  /* コンテナのテーブル（プログラムの宣言とアイコン） */
+    uint32_t table_count;  /* コンテナのテーブル */
     uint32_t table_bytes;  /* struct nos_table 一つの大きさ */
     uint32_t reserved;
     uint64_t slices;       /* struct nos_slice の配列の、ファイル先頭からのオフセット（8 に揃う） */
@@ -145,44 +145,10 @@ struct nos_table {
 /* コンテナのテーブル：アーキテクチャに依存しないもの。fat binary のスライスはこれを共有する。 */
 enum nos_file_table {
     NOS_FILE_STRINGS = 1,       /* byte 列：NUL 終端の UTF-8。ほかのコンテナのテーブルがオフセットで指す */
-    NOS_FILE_PROGRAM = 2,       /* struct nos_program。一つ */
-    NOS_FILE_PROGRAM_NAMES = 3, /* struct nos_program_name */
-    NOS_FILE_OPENS = 4,         /* struct nos_opens */
-    NOS_FILE_RUN = 5,           /* CRITICAL。struct nos_run。一つ */
-    NOS_FILE_ICONS = 6,         /* struct nos_icon */
-    NOS_FILE_ICON_FRAMES = 7,   /* struct nos_icon_frame */
-    NOS_FILE_ICON_DATA = 8,     /* byte 列：フレームの画像 */
+    /* 2〜8 は空き。プログラムの宣言（起動の入口、表示名、開ける文書の種類、スクリプト、アイコン）はイメージに置かず、
+       パッケージの宣言にある（docs/records/package-20261127/sekkei.md の 2.2） */
     /* CRITICAL。struct nos_driver_manifest。一つ。C:\Nocturne\Drivers の装置プログラムの種別と要求能力。 */
     NOS_FILE_DRIVER_MANIFEST = 9,
-};
-
-/* ---- プログラムの宣言 ----
-   プログラムレジストリ（user/services/programs）が読む、利用者に見せる値。PROGRAM を持つファイルがレジストリに載る。サービスの宣言（ケイパビリティ、起こし方）はシステムの方針で、ファイルが自分で決めないので、
-   ここに置かない（scripts/programs.py が生成する、サービスマネージャーの表）。
-
-   RUN を持つファイルはスライスを持たず（slice_count が 0、種類は PROGRAM）、ほかのプログラムが文書を開いて走らせる
-   プログラム（スクリプト）。 */
-#define NOS_PROGRAM_MENU 0x10000u    /* 開始メニューに出す */
-#define NOS_PROGRAM_DESKTOP 0x20000u /* デスクトップに出す */
-/* 入力方式（IME）のエンジン。この旗を持つプログラムが、設定の「入力方式」の一覧に出て、サービス textinput の
-   エンジンになれる（common/textinput_abi.h）。配列とは別の物である：US の配列のままでも選べ、選ばれなければ
-   何もしない。 */
-#define NOS_PROGRAM_INPUT_METHOD 0x40000u
-struct nos_program {
-    uint32_t flags;    /* NOS_PROGRAM_* */
-    uint32_t reserved;
-};
-struct nos_program_name {
-    uint32_t language; /* STRINGS の中のオフセット：BCP 47 の言語タグ（RFC 5646） */
-    uint32_t name;     /* STRINGS の中のオフセット：その言語の表示名 */
-};
-struct nos_opens {
-    uint32_t type;   /* STRINGS の中のオフセット：開ける文書の拡張子。"*" は拡張子の無い文書 */
-    uint32_t flags;  /* 0 */
-};
-struct nos_run {
-    uint32_t program;  /* STRINGS の中のオフセット：走らせるプログラムの名前 */
-    uint32_t argument; /* STRINGS の中のオフセット：このファイルと同じフォルダーにある、渡す文書の名前 */
 };
 
 /* ---- 装置プログラムのマニフェスト（NOS_FILE_DRIVER_MANIFEST） ----
@@ -195,31 +161,6 @@ struct nos_driver_manifest {
     uint32_t roles;        /* NOS_DRIVER_ROLE_* の組 */
     uint32_t flags;        /* 0 */
     uint64_t capabilities; /* (1ull << enum n_cap) の組（0 は不正） */
-};
-
-/* ---- アイコン ----
-   静止アイコンは一枚の画像。SVG を優先し、サイズ違いの PNG を並べてもよい。読み込み側は SVG を、なければ一番近い
-   サイズの PNG を選ぶ。アニメーションアイコンはフレームの列で、同じ用途の静止アイコンも持つ（アニメーションを出さない
-   場所と、動きを減らす設定のため）。 */
-enum nos_icon_role {
-    NOS_ICON_PROGRAM = 1, /* プログラムのアイコン（シェルの開始メニューとデスクトップ） */
-};
-struct nos_icon {
-    uint32_t role;         /* enum nos_icon_role */
-    uint32_t loops;        /* 繰り返しの回数。0 は無限。frame_count が 1 なら 0 */
-    uint32_t first_frame;  /* NOS_FILE_ICON_FRAMES 内の番号 */
-    uint32_t frame_count;  /* 1 は静止アイコン */
-};
-enum nos_media {
-    NOS_MEDIA_SVG = 1,
-    NOS_MEDIA_PNG = 2,
-};
-struct nos_icon_frame {
-    uint32_t media;        /* enum nos_media */
-    uint32_t duration_ms;  /* アニメーションで、このフレームを出す時間。静止アイコンは 0 */
-    uint32_t width, height; /* PNG のピクセル数。SVG は 0 */
-    uint64_t offset;       /* NOS_FILE_ICON_DATA の中のオフセット */
-    uint64_t bytes;
 };
 
 /* ---- イメージのスライス（program、library、driver、kernel） ---- */
@@ -801,12 +742,6 @@ struct nos_kernel_record {
 #define NOS_MIN_FILE 56u
 #define NOS_MIN_SLICE 32u
 #define NOS_MIN_TABLE 32u
-#define NOS_MIN_PROGRAM 8u
-#define NOS_MIN_PROGRAM_NAME 8u
-#define NOS_MIN_OPENS 8u
-#define NOS_MIN_RUN 8u
-#define NOS_MIN_ICON 16u
-#define NOS_MIN_ICON_FRAME 32u
 #define NOS_MIN_DRIVER_MANIFEST 16u
 #define NOS_MIN_IMAGE 240u
 #define NOS_MIN_REGION 40u
@@ -837,12 +772,6 @@ struct nos_kernel_record {
 NOS_STATIC_ASSERT(sizeof(struct nos_file) == NOS_MIN_FILE, "struct nos_file");
 NOS_STATIC_ASSERT(sizeof(struct nos_slice) == NOS_MIN_SLICE, "struct nos_slice");
 NOS_STATIC_ASSERT(sizeof(struct nos_table) == NOS_MIN_TABLE, "struct nos_table");
-NOS_STATIC_ASSERT(sizeof(struct nos_program) == NOS_MIN_PROGRAM, "struct nos_program");
-NOS_STATIC_ASSERT(sizeof(struct nos_program_name) == NOS_MIN_PROGRAM_NAME, "struct nos_program_name");
-NOS_STATIC_ASSERT(sizeof(struct nos_opens) == NOS_MIN_OPENS, "struct nos_opens");
-NOS_STATIC_ASSERT(sizeof(struct nos_run) == NOS_MIN_RUN, "struct nos_run");
-NOS_STATIC_ASSERT(sizeof(struct nos_icon) == NOS_MIN_ICON, "struct nos_icon");
-NOS_STATIC_ASSERT(sizeof(struct nos_icon_frame) == NOS_MIN_ICON_FRAME, "struct nos_icon_frame");
 NOS_STATIC_ASSERT(sizeof(struct nos_driver_manifest) == NOS_MIN_DRIVER_MANIFEST, "struct nos_driver_manifest");
 NOS_STATIC_ASSERT(sizeof(struct nos_image) == NOS_MIN_IMAGE, "struct nos_image");
 NOS_STATIC_ASSERT(sizeof(struct nos_unwind) == 8, "struct nos_unwind");
