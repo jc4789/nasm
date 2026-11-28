@@ -4,8 +4,9 @@
 
 /* .NOS：Nocturne の実行ファイル形式。オブジェクトファイル、アーカイブ、プログラム、ライブラリー、ドライバー、カーネル
    のイメージは、どれもこの形式で、ヘッダーの kind で分ける。このヘッダーは形（構造体、値、最初の大きさ）を持ち、規則と
-   理由（拡張の規則、置き方、選び方、ハッシュの範囲）は docs/nos.md にある。<stdint.h> だけを使い、ほかの言語のツール
-   （LLVM のフォーク、Go のリンカー、object クレート）は、ここからコピーか生成で同じ定義を持つ。
+   理由（拡張の規則、置き方、選び方、ハッシュの範囲、結び付け）は docs/nos.md にある。<stdint.h> だけを使い、ほかの
+   ツール（LLVM と NASM のフォークの nos.h はこのファイルのコピー、Go の internal/nos と Rust の object クレートは同じ
+   定義を自分の言語で持つ）は、ここに合わせる。
 
    ファイル：struct nos_file（コンテナのヘッダー）、struct nos_slice の配列、コンテナのテーブルの一覧。スライスは
    一つのアーキテクチャのイメージかオブジェクトで、中のオフセットは全部スライスの先頭から数える。数値は little endian。 */
@@ -28,7 +29,7 @@ enum nos_kind {
     NOS_KIND_OBJECT = 1,  /* コンパイラーとアセンブラーの出力。スライスは一つ */
     NOS_KIND_ARCHIVE = 2, /* オブジェクトとツール用のデータの集まり。スライスは一つ */
     NOS_KIND_PROGRAM = 3, /* プロセスの最初のイメージ */
-    NOS_KIND_LIBRARY = 4, /* 動いているプロセスにマップするイメージ（SYS_IMAGE_MAP） */
+    NOS_KIND_LIBRARY = 4, /* 共有ライブラリー。起動の集合か、実行時の読み込み（SYS_IMAGE_MAP）でプロセスにマップする */
     NOS_KIND_DRIVER = 5,  /* カーネルのドライバーのイメージ */
     NOS_KIND_KERNEL = 6,  /* カーネル。ブートローダーがマップする */
 };
@@ -152,8 +153,9 @@ enum nos_file_table {
 };
 
 /* ---- 装置プログラムのマニフェスト（NOS_FILE_DRIVER_MANIFEST） ----
-   C:\Nocturne\Drivers の装置プログラム（RULES を持つ NOS_KIND_PROGRAM）が自分の役割と必要能力を宣言する。
-   カーネルの装置の管理者が読み込み時に種別と能力ホワイトリストを検証し、違反する像は拒否する。 */
+   C:\Nocturne\Drivers の装置プログラム（RULES を持つ NOS_KIND_PROGRAM）が、自分の役割と要求するケイパビリティを宣言する。
+   カーネルの装置の管理（io/load.cpp）が読み込みの時に役割とケイパビリティの許可の一覧で確かめ、合わないイメージを
+   拒否する。 */
 #define NOS_DRIVER_ROLE_DISPLAY 0x1u /* 表示出力（SYS_DISPLAY_DRIVER_*）を提供する */
 #define NOS_DRIVER_ROLE_GPU 0x2u     /* GPU adapter（SYS_GPU_ADAPTER_*）を提供する */
 #define NOS_DRIVER_ROLES_KNOWN (NOS_DRIVER_ROLE_DISPLAY | NOS_DRIVER_ROLE_GPU)
@@ -227,7 +229,7 @@ struct nos_region {
 };
 /* リージョンはアドレスの昇順で、ページを分け合わず、[0, span) の中にある。間の隙間はマップしない。ファイルの中の
    データもページを分け合わず、最後のページの終わりまでスライスの中にあり、file_bytes の後ろからページの終わりまでは
-   0（ほかのものを置かない）。そのため、ファイルのページをそのまま写したページの中身は、全部イメージのハッシュで決まる。
+   0（ほかのものを置かない）。そのため、ファイルのページをそのままコピーしたページの中身は、全部イメージのハッシュで決まる。
    CODE と CONSTANT はリロケーションを持たないので、リンカーは、イメージのアドレスの絶対値が要る CODE のセクションを
    エラーにし、CONSTANT のセクションを RELOCATED に置く。 */
 
@@ -301,10 +303,11 @@ struct nos_relocation_run {
 
 /* ---- プロバイダー、インポート、エクスポート ----
    プロバイダーは、名前とバージョン (major, minor) を持つ API の集まり。要求は「名前が同じで、major が同じで、minor が
-   提供側の minor 以下」で満たされる。major 0（安定を約束しない版）の要求は、組んだ時の版 built が提供側の minor と同じ時
-   だけ満たされる。カーネルが提供するのは nocturne.abi（エントリーイメージ。major が KABI_ABI_GENERATION、minor が 0）と
-   nocturne.ddk（DDK_MAJOR、DDK_MINOR）。nocturne.abi を要求してよいのは、OS の印を持つ結び付けの表の項のライブラリーと、
-   全部の呼び出しを持つ OS のプログラムで、ドライバーは nocturne.ddk だけを要求する。
+   提供側の minor 以下」で満たされる。major 0（安定を約束しない版）の要求は、ビルドした時の版 built が提供側の minor と同じ時
+   だけ満たされる。カーネルが提供するのは nocturne.abi（エントリーイメージ。major が KABI_ABI_GENERATION、minor が 0）と、カーネルの
+   イメージが実装する契約（nocturne.ddk と、カーネルに入れた部品の契約。docs/contract.md の 7.6）。nocturne.abi を要求して
+   よいのは、OS の印を持つ結び付けの表の項のライブラリーと、全部の呼び出しを持つ OS のプログラムで、ドライバーは
+   カーネルのイメージの提供だけを要求し、nocturne.ddk は必ず要求する。
 
    持てる種類：REQUIRES はどれも。IMPORTS は PROGRAM、LIBRARY、DRIVER。PROVIDES、EXPORTS、FORWARDS は PROGRAM、LIBRARY、
    KERNEL。REQUIRES と PROVIDES は名前の byte の昇順で、名前が重ならない。 */
@@ -321,7 +324,7 @@ struct nos_provider {
     uint32_t major;
     uint32_t minor;    /* REQUIRES では読み込みに要る版（強いインポートの since の最大） */
     uint32_t flags;    /* NOS_PROVIDER_* */
-    uint32_t built;    /* REQUIRES では組んだ時の版（リンクの入力の PROVIDES の minor）。PROVIDES では 0 */
+    uint32_t built;    /* REQUIRES ではビルドした時の版（リンクの入力の PROVIDES の minor）。PROVIDES では 0 */
     uint32_t reserved;
 };
 
@@ -396,7 +399,8 @@ struct nos_driver {
     uint32_t name;   /* STRINGS の中のオフセット。デバイスマネージャーに見せるドライバーの名前 */
 };
 
-/* RULES のエントリーは 24 byte の項で、struct kabi_hal_term（common/hal_abi.h。項の意味はそこ）と同じ形：uint32_t key、
+/* RULES のエントリーは 24 byte の項で、struct kabi_hal_term（common/hal_abi.h。項の意味はそこ。claim のプログラムが書く）と
+   DDK の契約の struct ddk_rule_term（kernel/ddk/contracts/nocturne.ddk.7/rule.contract。ドライバーが書く）と同じ形：uint32_t key、
    uint32_t size、16 byte。size が 0 の項は数の項で、16 byte は uint64_t value と uint64_t mask。size が 1 から 16 の項は
    バイトの項で、16 byte の先頭 size byte が並び。キーが NOS_RULE_START の項がルールを始め、その value が続く項の数
    （1 以上）。 */
@@ -576,18 +580,23 @@ struct nos_group {
    スロットのアドレス（中身は S）、TP はスレッドポインター（FS のベース）、D はリンカーが作る TLS のディスクリプター
    のアドレス。
 
-   TLS のディスクリプターは 16 byte：解決の関数のアドレスと、その引数。解決の関数は NOS_TLS_RESOLVER の関数で、
-   rax にディスクリプターのアドレスを受け、rax に S - TP を返す。rax とフラグのほかは、レジスターも状態も変えない
-   （呼ぶ側は何も退避しない）。引数の 2 語目が TLS_ARGUMENTS の項なら、マップする側がイメージの TLS の配置から書く
-   （struct nos_tls_argument）。項でなければ、2 語目は S の TLS ブロック内のオフセットで、解決の関数はライブラリー自身が
-   定義し、TLS ブロックはスレッドが初めて使った時に作る。解決の関数は自分のイメージの TLS ブロックだけを扱うので、
-   TLS のシンボルはエクスポートにならず、インポートもできない（リンカーのエラー）。ほかのイメージには、そのイメージの
-   関数を通して渡す。
+   TLS のディスクリプターは 16 byte：解決の関数のアドレスと、その引数。解決の関数はプロセスに一つの NOS_TLS_RESOLVER
+   （中核のライブラリーが定義する）で、rax にディスクリプターのアドレスを受け、rax に S - TP を返す。rax とフラグの
+   ほかは、レジスターも状態も変えない（呼ぶ側は何も退避しない）。ライブラリーのディスクリプターは、1 語目が解決の関数の
+   インポート（定義するイメージ自身では、その番地とベースリロケーション）で、2 語目が TLS_ARGUMENTS の項。どちらも
+   マップする側が書く（struct nos_tls_argument）。JIT のコードのディスクリプターは、JIT が中核のライブラリーから取った
+   動的な TLS の番号で、2 語目に「番号 << 32 | offset」を書く。ディスクリプターが指すのは自分のイメージの TLS ブロック
+   だけなので、TLS のシンボルはエクスポートにならず、インポートもできない（リンカーのエラー）。ほかのイメージには、
+   そのイメージの関数を通して渡す。
 
    プログラムの TLS ブロックは [TP - T, TP) にある。T は tls_bytes を tls_align の倍数に切り上げた値で、TP（スレッドの
    区画の先頭。%fs:0 がその番地を持つ）は tls_align に揃う。位置がリンクの時に決まるので、リンカーはプログラムの
    ディスクリプターを作らず、命令を固定オフセットに書き換える。 */
 #define NOS_TLS_RESOLVER "__nos_tls_resolve"
+/* 解決の関数がスタックに使う上限（byte。呼ばれた時の戻りの番地を含まない）。解決の関数は確保もロックも待ちもしない。
+   契約の生成器の verify は、ディスクリプターを通る呼び出しをこの約束で数え、解決の関数を定義するイメージではその関数が
+   約束を守ることを確かめる（docs/contract.md の 8 章）。 */
+#define NOS_TLS_RESOLVER_STACK 64
 enum nos_x86_64_relocation {
     NOS_X86_64_ABS64 = 1,        /* S + A。データの中のポインター */
     NOS_X86_64_ABS32 = 2,        /* S + A を 32 bit の符号なしで。絶対シンボルだけ */

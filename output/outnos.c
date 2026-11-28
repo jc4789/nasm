@@ -3,7 +3,7 @@
 
 /*
  * outnos.c：.NOS のオブジェクト（NOS_KIND_OBJECT、x86-64）を書く出力形式 -f nos。形式の決まりは nos.h（Nocturne の
- * common/nos.h の写し）にあり、書き方の説明は Nocturne の ports/nasm/README.md にある。
+ * common/nos.h のコピー）にあり、書き方の説明は Nocturne の ports/nasm/README.md にある。
  *
  * NASM はシンボルを「セグメントとオフセット」で渡し、どのシンボルを書いたかは渡さない。そのため、参照先に global か
  * weak のシンボルがちょうどあればそのシンボルを、なければセクションのシンボルを、リロケーションの参照先にする
