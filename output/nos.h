@@ -160,7 +160,7 @@ enum nos_file_table {
 struct nos_driver_manifest {
     uint32_t roles;        /* NOS_DRIVER_ROLE_* の組 */
     uint32_t flags;        /* 0 */
-    uint64_t capabilities; /* (1ull << enum n_cap) の組（0 は不正） */
+    uint64_t capabilities; /* (1ull << enum kabi_cap) の組（0 は不正） */
 };
 
 /* ---- イメージのスライス（program、library、driver、kernel） ---- */
@@ -201,7 +201,7 @@ struct nos_image {
 };
 
 /* init、fini、tls、unwind_index、unwind は、マップしたイメージの中のアドレスで、プロセスの中のコードが読む。カーネルは
-   これを struct n_image（common/abi.h）に入れて、起動の集合は struct n_start で、後から読み込んだイメージは
+   これを struct kabi_image（common/abi.h）に入れて、起動の集合は struct kabi_start で、後から読み込んだイメージは
    SYS_IMAGE_MAP の結果で中核のライブラリーに渡す。ドライバーとカーネルは init、fini、tls、アンワインドのテーブルを持たない。 */
 
 struct nos_unwind {
@@ -241,7 +241,7 @@ enum nos_image_table {
     NOS_IMAGE_PROVIDES = 6,         /* struct nos_provider：自分が提供するプロバイダー */
     NOS_IMAGE_EXPORTS = 7,          /* struct nos_export。(provider, 名前の byte) の昇順 */
     NOS_IMAGE_DRIVER = 8,           /* struct nos_driver。一つ */
-    NOS_IMAGE_RULES = 9,            /* struct n_hal_term（common/hal_abi.h）の並び。NOS_RULE_TERM_BYTES */
+    NOS_IMAGE_RULES = 9,            /* struct kabi_hal_term（common/hal_abi.h）の並び。NOS_RULE_TERM_BYTES */
     NOS_IMAGE_KERNEL = 10,          /* CRITICAL。struct nos_kernel。ページテーブルの段数ごとに一つ */
     NOS_IMAGE_NAMES = 11,           /* DETACHED。struct nos_name。start の昇順 */
     NOS_IMAGE_NAME_STRINGS = 12,    /* DETACHED。byte 列：NAMES の名前 */
@@ -302,7 +302,7 @@ struct nos_relocation_run {
 /* ---- プロバイダー、インポート、エクスポート ----
    プロバイダーは、名前とバージョン (major, minor) を持つ API の集まり。要求は「名前が同じで、major が同じで、minor が
    提供側の minor 以下」で満たされる。major 0（安定を約束しない版）の要求は、組んだ時の版 built が提供側の minor と同じ時
-   だけ満たされる。カーネルが提供するのは nocturne.abi（エントリーイメージ。major が N_ABI_GENERATION、minor が 0）と
+   だけ満たされる。カーネルが提供するのは nocturne.abi（エントリーイメージ。major が KABI_ABI_GENERATION、minor が 0）と
    nocturne.ddk（DDK_MAJOR、DDK_MINOR）。nocturne.abi を要求してよいのは、OS の印を持つ結び付けの表の項のライブラリーと、
    全部の呼び出しを持つ OS のプログラムで、ドライバーは nocturne.ddk だけを要求する。
 
@@ -396,7 +396,7 @@ struct nos_driver {
     uint32_t name;   /* STRINGS の中のオフセット。デバイスマネージャーに見せるドライバーの名前 */
 };
 
-/* RULES のエントリーは 24 byte の項で、struct n_hal_term（common/hal_abi.h。項の意味はそこ）と同じ形：uint32_t key、
+/* RULES のエントリーは 24 byte の項で、struct kabi_hal_term（common/hal_abi.h。項の意味はそこ）と同じ形：uint32_t key、
    uint32_t size、16 byte。size が 0 の項は数の項で、16 byte は uint64_t value と uint64_t mask。size が 1 から 16 の項は
    バイトの項で、16 byte の先頭 size byte が並び。キーが NOS_RULE_START の項がルールを始め、その value が続く項の数
    （1 以上）。 */
@@ -656,7 +656,7 @@ struct nos_archive_symbol {
                  大きい方）
    nos.provides  struct nos_provider_record と旗 → PROVIDES
    nos.driver    struct nos_driver_record → DRIVER。イメージに一つ
-   nos.rules     struct n_hal_term の並び → RULES。そのまま続けて並べる
+   nos.rules     struct kabi_hal_term の並び → RULES。そのまま続けて並べる
    nos.kernel    struct nos_kernel_record → KERNEL。カーネルのイメージだけで、ページテーブルの段数ごとに一つ */
 #define NOS_SECTION_REQUIRES "nos.requires"
 #define NOS_SECTION_PROVIDES "nos.provides"
@@ -714,14 +714,14 @@ struct nos_kernel_record {
         char name[sizeof(name_)];                                                                               \
     } __attribute__((aligned(8))) nos_driver_declared = {sizeof nos_driver_declared, (flags_), name_}
 /* このイメージ（ドライバーか、デバイスを claim で所有するプログラム）がデバイスと結ぶルール：common/hal_abi.h の
-   N_HAL_RULE を一つ以上。 */
+   KABI_HAL_RULE を一つ以上。 */
 #ifdef __cplusplus
 #define NOS_RULES(...)                                                                                          \
-    __attribute__((used, retain, section(NOS_SECTION_RULES))) static constinit const struct n_hal_term         \
+    __attribute__((used, retain, section(NOS_SECTION_RULES))) static constinit const struct kabi_hal_term         \
         NOS_UNIQUE(nos_rules_)[] = {__VA_ARGS__}
 #else
 #define NOS_RULES(...)                                                                                          \
-    __attribute__((used, retain, section(NOS_SECTION_RULES))) static const struct n_hal_term                   \
+    __attribute__((used, retain, section(NOS_SECTION_RULES))) static const struct kabi_hal_term                   \
         NOS_UNIQUE(nos_rules_)[] = {__VA_ARGS__}
 #endif
 /* このカーネルは、ページテーブルが levels_ 段の時、イメージを [image_low_, image_high_) に、ダイレクトマップを
