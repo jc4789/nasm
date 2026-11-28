@@ -249,7 +249,7 @@ struct nos_image {
     uint64_t align;          /* ベースアドレスのアラインメント。ページ以上の 2 の冪 */
     uint64_t span;           /* ベースアドレスからのアドレス範囲の長さ。ページの倍数 */
     uint64_t entry;          /* エントリーポイントの、ベースからのオフセット。CODE の中。PROGRAM、DRIVER、KERNEL と、
-                                NOS_PROVIDER_PROCESS を提供する LIBRARY だけが使い、ほかの LIBRARY の値は読まない */
+                                NOS_PROVIDER_PROCESS を提供する LIBRARY だけが使い、ほかの LIBRARY は 0 */
     struct nos_range init;   /* 8 byte の関数アドレスの配列。前から呼ぶ。RELOCATED の中 */
     struct nos_range fini;   /* 後ろから呼ぶ。RELOCATED の中 */
     struct nos_range tls;    /* TLS テンプレート（初期値の部分）。CONSTANT か RELOCATED の中 */
@@ -260,8 +260,8 @@ struct nos_image {
 };
 
 /* init、fini、tls、unwind_index、unwind は、マップしたイメージの中のアドレスで、プロセスの中のコードが読む。カーネルは
-   これを struct n_image（common/abi.h）に入れて、プログラムには struct n_start で、ライブラリーには SYS_IMAGE_MAP の
-   結果で渡す。ドライバーとカーネルは init、fini、tls、アンワインドのテーブルを持たない。 */
+   これを struct n_image（common/abi.h）に入れて、起動の集合は struct n_start で、後から読み込んだイメージは
+   SYS_IMAGE_MAP の結果で中核のライブラリーに渡す。ドライバーとカーネルは init、fini、tls、アンワインドのテーブルを持たない。 */
 
 struct nos_unwind {
     uint32_t start; /* 関数の先頭の、ベースからのオフセット */
@@ -309,6 +309,7 @@ enum nos_image_table {
     NOS_IMAGE_FORWARDS = 15,        /* CRITICAL。struct nos_forward：転送のエクスポート。(provider, 名前の byte) の昇順 */
     NOS_IMAGE_REPLACEMENTS = 16,    /* CRITICAL。struct nos_replacement。PROGRAM だけ。(provider, 名前の byte) の昇順 */
     NOS_IMAGE_TLS_ARGUMENTS = 17,   /* CRITICAL。struct nos_tls_argument。LIBRARY だけ。slot の昇順で重ならない */
+    NOS_IMAGE_STACK_SIZES = 18,     /* DETACHED。struct nos_stack_size。address の昇順で重ならない */
     /* DWARF（DETACHED、byte 列）：NOS_IMAGE_DWARF + enum nos_dwarf。オブジェクトの DEBUG のセクションを、部分ごとに
        並べたもの */
     NOS_IMAGE_DWARF = 0x100,
@@ -359,9 +360,10 @@ struct nos_relocation_run {
 
 /* ---- プロバイダー、インポート、エクスポート ----
    プロバイダーは、名前とバージョン (major, minor) を持つ API の集まり。要求は「名前が同じで、major が同じで、minor が
-   提供側の minor 以下」で満たされる。カーネルが提供するのは nocturne.abi（major が N_ABI_GENERATION、minor が
-   N_ENTRY_SLOTS）と nocturne.ddk（DDK_MAJOR、DDK_MINOR）。プログラムとライブラリーは nocturne.abi を、ドライバーは
-   nocturne.ddk を要求する。
+   提供側の minor 以下」で満たされる。major 0（安定を約束しない版）の要求は、組んだ時の版 built が提供側の minor と同じ時
+   だけ満たされる。カーネルが提供するのは nocturne.abi（エントリーイメージ。major が N_ABI_GENERATION、minor が 0）と
+   nocturne.ddk（DDK_MAJOR、DDK_MINOR）。nocturne.abi を要求してよいのは、OS の印を持つ結び付けの表の項のライブラリーと、
+   全部の呼び出しを持つ OS のプログラムで、ドライバーは nocturne.ddk だけを要求する。
 
    持てる種類：REQUIRES はどれも。IMPORTS は PROGRAM、LIBRARY、DRIVER。PROVIDES、EXPORTS、FORWARDS は PROGRAM、LIBRARY、
    KERNEL。REQUIRES と PROVIDES は名前の byte の昇順で、名前が重ならない。 */
@@ -438,6 +440,14 @@ struct nos_tls_argument {
     uint64_t offset;    /* イメージの TLS ブロックの中のオフセット。tls_bytes より小さく、2^32 より小さい */
 };
 
+/* 関数の固定のフレームの大きさ：コンパイラーが関数ごとに出した記録（オブジェクトの STACK_SIZES のセクション）を、
+   リンカーが残った関数の分だけ並べたもの。契約の生成器の verify が、関数が使うスタックの上限を数えるのに読む
+   （docs/contract.md）。可変の大きさのフレームを持つ関数とアセンブリーの関数は記録を持たない。 */
+struct nos_stack_size {
+    uint64_t address;   /* 関数の先頭の、ベースからのオフセット。CODE の中 */
+    uint64_t bytes;     /* 関数がスタックに取る大きさ（退避するレジスターを含み、呼ばれた時の戻りの番地を含まない） */
+};
+
 /* ---- ドライバーとデバイスのマッチングルール ---- */
 #define NOS_DRIVER_BOOT 0x1u /* ブートデバイスを読むまでの経路に要る：ブートローダーが読み込んで渡す */
 struct nos_driver {
@@ -502,6 +512,7 @@ enum nos_object_table {
     NOS_OBJECT_SYMBOLS = 3,      /* CRITICAL。struct nos_symbol */
     NOS_OBJECT_RELOCATIONS = 4,  /* CRITICAL。struct nos_relocation。セクションごとに続けて並ぶ */
     NOS_OBJECT_GROUPS = 5,       /* CRITICAL。struct nos_group */
+    NOS_OBJECT_CONTRACT_SYMBOLS = 6, /* struct nos_contract_symbol。symbol の昇順で重ならない */
 };
 
 /* セクションの役割。役割がリージョンを決め、名前は決めない（DECLARATION は名前で中身が決まる）。 */
@@ -518,9 +529,14 @@ enum nos_role {
     NOS_ROLE_DEBUG = 10,      /* DWARF の一つの部分（dwarf_part） */
     NOS_ROLE_DECLARATION = 11, /* 宣言（下の「宣言」）。名前は nos. で始まる。マップしない */
     NOS_ROLE_BLOB = 12,       /* ツール用のデータ。名前が BLOBS の名前になる。マップしない */
+    NOS_ROLE_STACK_SIZES = 13, /* 関数の固定のフレームの大きさの記録（下）。マップしない */
 };
 /* DECLARATION と BLOB のセクションはアドレスを持たないので、その中のリロケーションと、その中のシンボルを指す
-   リロケーションは、リンカーのエラー。 */
+   リロケーションは、リンカーのエラー。
+
+   STACK_SIZES のセクションの中身は、関数ごとに「関数の先頭の番地（8 byte。ABS64 のリロケーションで関数を指す）、
+   フレームの大きさ（ULEB128。struct nos_stack_size の bytes）」の並びで、リロケーションは ABS64 だけ。parent は関数の
+   セクションで、関数が残る時だけ残る。リンカーは、残った記録をイメージの STACK_SIZES のテーブルにする。 */
 
 #define NOS_SECTION_RETAIN 0x1u /* 参照がなくても、不要セクションの削除で外さない */
 #define NOS_SECTION_MERGE 0x2u  /* entry_bytes の要素の並びで、同じ要素をまとめてよい */
@@ -587,6 +603,17 @@ struct nos_symbol {
     uint32_t reserved;
 };
 
+/* 契約の宣言への参照：コンパイラーが、契約の属性（docs/contract.md の nocturne_contract）を持つ宣言への未定義の
+   シンボルに付ける。リンカーは、そのシンボルをリンクの入力のイメージから解決する時に、provider（major）のエクスポートに
+   限り、エクスポートの since が since と違えばエラーにする。オブジェクトとアーカイブの定義で解決する時は読まない。
+   読まない読み手が無視しても、名前による解決で正しいイメージになる（CRITICAL でない）。 */
+struct nos_contract_symbol {
+    uint32_t symbol;    /* SYMBOLS の番号。未定義のシンボル */
+    uint32_t provider;  /* STRINGS の中のオフセット：プロバイダーの名前 */
+    uint32_t major;
+    uint32_t since;     /* 宣言が現れた minor */
+};
+
 struct nos_relocation {
     uint64_t offset;       /* セクションの中のオフセット */
     int64_t addend;
@@ -617,7 +644,7 @@ struct nos_group {
    関数を通して渡す。
 
    プログラムの TLS ブロックは [TP - T, TP) にある。T は tls_bytes を tls_align の倍数に切り上げた値で、TP（スレッドの
-   struct n_thread_block の先頭）は tls_align に揃う。位置がリンクの時に決まるので、リンカーはプログラムの
+   区画の先頭。%fs:0 がその番地を持つ）は tls_align に揃う。位置がリンクの時に決まるので、リンカーはプログラムの
    ディスクリプターを作らず、命令を固定オフセットに書き換える。 */
 #define NOS_TLS_RESOLVER "__nos_tls_resolve"
 enum nos_x86_64_relocation {
@@ -793,6 +820,7 @@ struct nos_kernel_record {
 #define NOS_MIN_FORWARD 16u
 #define NOS_MIN_REPLACEMENT 16u
 #define NOS_MIN_TLS_ARGUMENT 16u
+#define NOS_MIN_STACK_SIZE 16u
 #define NOS_MIN_NAME 24u
 #define NOS_MIN_BLOB 24u
 #define NOS_MIN_OBJECT 32u
@@ -800,6 +828,7 @@ struct nos_kernel_record {
 #define NOS_MIN_SYMBOL 32u
 #define NOS_MIN_RELOCATION 24u
 #define NOS_MIN_GROUP 8u
+#define NOS_MIN_CONTRACT_SYMBOL 16u
 #define NOS_MIN_ARCHIVE 24u
 #define NOS_MIN_MEMBER 24u
 #define NOS_MIN_ARCHIVE_SYMBOL 8u
@@ -825,6 +854,7 @@ NOS_STATIC_ASSERT(sizeof(struct nos_export) == 24, "struct nos_export");
 NOS_STATIC_ASSERT(sizeof(struct nos_forward) == NOS_MIN_FORWARD, "struct nos_forward");
 NOS_STATIC_ASSERT(sizeof(struct nos_replacement) == NOS_MIN_REPLACEMENT, "struct nos_replacement");
 NOS_STATIC_ASSERT(sizeof(struct nos_tls_argument) == NOS_MIN_TLS_ARGUMENT, "struct nos_tls_argument");
+NOS_STATIC_ASSERT(sizeof(struct nos_stack_size) == NOS_MIN_STACK_SIZE, "struct nos_stack_size");
 NOS_STATIC_ASSERT(sizeof(struct nos_driver) == NOS_MIN_DRIVER, "struct nos_driver");
 NOS_STATIC_ASSERT(sizeof(struct nos_kernel) == 48, "struct nos_kernel");
 NOS_STATIC_ASSERT(sizeof(struct nos_name) == NOS_MIN_NAME, "struct nos_name");
@@ -834,6 +864,7 @@ NOS_STATIC_ASSERT(sizeof(struct nos_section) == NOS_MIN_SECTION, "struct nos_sec
 NOS_STATIC_ASSERT(sizeof(struct nos_symbol) == NOS_MIN_SYMBOL, "struct nos_symbol");
 NOS_STATIC_ASSERT(sizeof(struct nos_relocation) == NOS_MIN_RELOCATION, "struct nos_relocation");
 NOS_STATIC_ASSERT(sizeof(struct nos_group) == NOS_MIN_GROUP, "struct nos_group");
+NOS_STATIC_ASSERT(sizeof(struct nos_contract_symbol) == NOS_MIN_CONTRACT_SYMBOL, "struct nos_contract_symbol");
 NOS_STATIC_ASSERT(sizeof(struct nos_archive) == NOS_MIN_ARCHIVE, "struct nos_archive");
 NOS_STATIC_ASSERT(sizeof(struct nos_member) == NOS_MIN_MEMBER, "struct nos_member");
 NOS_STATIC_ASSERT(sizeof(struct nos_archive_symbol) == NOS_MIN_ARCHIVE_SYMBOL, "struct nos_archive_symbol");
